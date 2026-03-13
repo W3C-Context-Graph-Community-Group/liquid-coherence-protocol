@@ -1,312 +1,156 @@
-# coherence-protocol
-Before Shannon, "information" was in the same position — an intuitive concept everyone used and nobody could quantify. Shannon gave it a formal definition: the reduction of uncertainty, measured in bits. After that, you could build communication systems with provable guarantees. Coherence gives a mathematical understanding of evaluating "Context"
+# Liquid Coherence Protocol
 
-These are working notes to be used in determining a protocol schema. They should be considered draft.
-
-## Canonical Atomic Form
-
-Every claim in the Context Graph — regardless of source format — reduces to a single row in a five-column table:
-
-| `id` (URI) | `source` (URI) | `timestamp` | `key` | `value` |
-|---|---|---|---|---|
-| What entity is this about? | Who made this claim? | When? | What property? | What value? |
-
-This is the irreducible canonical claim form — 6NF-like in spirit. A SHACL shape decomposes into one or more rows (one per assertion). A JSON field is one row. A CSV cell is one row. A blob reference is one row. Everything decomposes to this.
-
-### How URIs Work
-
-All `id` and `source` values are URIs. A URI is simply a globally unique string that identifies something. The Context Graph uses URIs because they provide identity without requiring a central registry.
-
-**Local URIs** — generated on the fly, no global dependency needed. The standard approach is a UUID formatted as a URN:
-
-```
-urn:uuid:550e8400-e29b-41d4-a716-446655440000
-```
-
-The structure is: `urn:uuid:` (the scheme, meaning "this is a UUID-based name") followed by a UUID (a 128-bit identifier that any system can generate without coordination). Any browser, any local process, any agent can mint one instantly. Two systems generating URIs independently will never collide.
-
-For worked examples in this document, we use shortened forms for readability:
-
-```
-urn:uuid:aaa-001     (shorthand — in production, a full UUID)
-urn:system:broker-a  (identifies the source system)
-urn:actor:user-jane  (identifies a human actor)
-urn:system:coherence-gate  (identifies the evaluation system)
-```
-
-**Global URIs** — when an entity maps to a well-known concept, the global URI is recorded as a claim, not substituted for the local `id`:
-
-```
-https://xbrl.us/us-gaap/RevenueFromContractWithCustomer
-```
-
-**The stability rule:** Graph-local `id` values remain stable throughout the trace. Alignment to global concepts is expressed as claims — using keys such as `uri`, `same_as`, or `maps_to` — rather than by replacing the `id`. This preserves join stability and trace integrity over time.
-
-For example, if `urn:uuid:aaa-001` is later identified as a known XBRL concept, the link is a new row in the Meaning facet:
-
-| id | source | timestamp | key | value |
-|---|---|---|---|---|
-| `urn:uuid:aaa-001` | `urn:system:broker-a` | 2026-03-06T09:00:00Z | `maps_to` | `https://xbrl.us/us-gaap/RevenueNet` |
-
-The `id` never changes. The mapping is a claim like any other.
-
-### Why ID and Source are Separate
-
-ID and source answer different questions:
-
-- **ID**: What entity is this claim about? (source-local — each system's entities get their own URIs)
-- **Source**: Who made this claim?
-
-Because `id` is source-local, two systems describing their own "Revenue" column will have different `id` values (e.g., `urn:uuid:aaa-001` and `urn:uuid:bbb-001`). Cross-source comparison is not an ID match — it is an evaluation event recorded in the Context facet. The coherence gate compares claims from different entities and records whether they are aligned, misaligned, or unknown.
-
-### How Facets Link to Each Other
-
-The `id` column is the join key across facets for a single entity. A single entity — say, System A's "Revenue" column — gets one URI. That same URI appears in the Data, Meaning, and Structure facets:
-
-```
-Data facet:       id = urn:uuid:aaa-001  →  the actual values
-Meaning facet:    id = urn:uuid:aaa-001  →  what those values refer to
-Structure facet:  id = urn:uuid:aaa-001  →  what shapes those values must have
-```
-
-Same `id`, three facets, three different questions about the same entity. The join is trivial — any facet can be linked to any other by `id`.
-
-If a user uploads multiple datasets in a conversation, each column in each dataset gets its own URI. The table a column belongs to is just another claim in the Data facet:
-
-| id | source | timestamp | key | value |
-|---|---|---|---|---|
-| `urn:uuid:aaa-001` | `urn:system:broker-a` | 2026-03-06T09:00:00Z | `belongs_to` | `acme-10k-2025.xlsx` |
-| `urn:uuid:aaa-001` | `urn:system:broker-a` | 2026-03-06T09:00:00Z | `column_name` | `Revenue` |
-
-No schema change. The relationship between a column and its parent table is just another row. This scales to any number of datasets without any structural modification.
-
-### What the Five Columns Give You
-
-| Column | What it enables |
-|---|---|
-| `id` | Entity identity — join claims about the same entity across facets |
-| `source` | Provenance — identify who made each claim |
-| `timestamp` | Temporality — track resolution over time |
-| `key` | Assertion type — classify by facet and property |
-| `value` | Assertion content — the actual claim |
-
-#### Differentiability: Measuring Differences in a Universal Primitives Format
-
-Any of the facets can be compared because of the simplicity of their structure:
-
-- **id**: Are we talking about the same element?
-- **source**: Do we agree on "according to whom"?
-- **timestamp**: How much difference in time?
-- **key**: Do they match?
-- **value**: Do they match?
+**W3C Context Graphs Community Group — Coherence Protocol Committee**  
+Chair: Ron Itelman (Community Group Chair)
 
 ---
 
-## Four Facets
+## What This Repository Is For
 
-Every data element at a boundary decomposes into four orthogonal facets. The Data, Meaning, and Structure facets share the canonical atomic form. The Context facet is compositional.
+This repository owns the **Coherence Protocol specification**: the core technical deliverable of the W3C Context Graphs Community Group.
 
-| Facet | What it captures | Form |
+The Coherence Protocol specifies how independently designed systems — each operating under its own codebook, its own assumptions, its own definitions — can cross a shared boundary, measure the gap between what one system declares and what another requires, and produce a structured record of what was known, what was missing, what was asked, and what was decided. It is the instrument that makes codebook misalignment detectable, measurable, and resolvable at the point where it actually occurs: the boundary between systems.
+
+This is not a data quality framework. It is not an ontology. It is not a schema validator. It is a measurement protocol for the layer that all of those tools assume has already been handled — and that, in the default condition of most cross-system communication, has not.
+
+---
+
+## The Problem This Solves
+
+Every framework that minimizes uncertainty — Shannon's channel coding, Bayesian decision theory, active inference — presupposes that sender and receiver share a codebook. Shannon is correct. His model is complete and proven. We are not challenging it. We are identifying where its assumptions stop holding.
+
+Shannon certifies delivery. He tells you whether the bits arrived. He cannot tell you whether the value those bits encode means the same thing on both sides of the boundary. That information is not on the wire. It is in the sender's codebook, on the other side. No quantity computable from Shannon's model distinguishes aligned codebooks from misaligned ones. This gap is not an engineering opinion. It is a formal result, and it extends to every downstream framework built on Shannon's foundation.
+
+The consequence: a receiver proceeds with zero uncertainty about an interpretation that may be wrong. The date `03/01/2026` passes schema validation, matches the expected format, carries no error flag, and may mean March 1st or January 3rd depending on which side of the boundary produced it. The field labeled `revenue` in a 10-K filing maps to 27 distinct tagged definitions in XBRL — one of which an agent will select, silently, without disclosing that alternatives exist or that the selection has interpretive consequences. Every system reports success. The answer may be wrong.
+
+We call this condition **ignorance of incoherence**: the state in which a system acts on ambiguous information with full confidence precisely because no instrument it possesses can distinguish the ambiguity from agreement.
+
+The Coherence Protocol is that instrument.
+
+---
+
+## What the Protocol Does
+
+The protocol decomposes the codebook into three **comparison facets** — Meaning, Structure, and Data — and a **resolution layer**, Context, that functions asymmetrically as the accumulating record of what was missing, surfaced, and resolved across the other three.
+
+| Facet | Question | Form |
 |---|---|---|
-| **Data** | Observed values | `id \| source \| timestamp \| key \| value` |
-| **Meaning** | Semantic identity (URI, definition, or constraint set) | `id \| source \| timestamp \| key \| value` |
-| **Structure** | Valid value space (type, format, range) | `id \| source \| timestamp \| key \| value` |
-| **Context** | Resolution history, environment, uncertainties, intent, scores | Table of tables (same atomic form, self-referential) |
+| **Data** | What values exist? | Observable, delivered by Shannon |
+| **Meaning** | What do those values refer to? | Semantic definition, URI-identified |
+| **Structure** | How are those values encoded? | Schema and constraints |
+| **Context** | What resolutions were required to make the comparisons above well-defined? | Resolution layer — accumulates through the protocol's operation |
 
-Data, Meaning, and Structure are invariant — they answer fixed questions (what values exist? what do they refer to? what shapes are valid?). The atomic form captures all three completely. Because every facet table has the same structure, comparison operators (intersection, difference, distance scoring) are universal across facets.
+Context is not a fourth kind of information alongside the others. It is the protocol's working memory: the structured record of every incompleteness discovered and every question answered. A match on Meaning or Structure without surfaced Context is unverifiable — not because Context is a separate dimension that also needs matching, but because the comparisons on Meaning and Structure are not yet well-defined without it.
 
-### Context Facet: Table of Tables
+Every comparison produces a binary result: match or mismatch. The protocol produces three actions:
 
-Context is the meta-facet. It records the *evaluation* of the other three facets — plus everything else needed to audit, replay, and learn from boundary events. It is a container of named sub-tables, each using the same five-column atomic form:
+- **Halt** — a decidable condition required to proceed is not satisfied. Do not proceed.
+- **Ask** — uncertainty is measurable and reducible. The divergence has been identified and can be narrowed through further exchange. Each Ask acquires information that no computation on the received data can produce. Each Ask produces Context.
+- **Act** — all decidable conditions are met and measured uncertainty is below threshold. The boundary is coherent. Proceed.
 
-```
-Context Graph Instance (at a boundary, at a moment)
-├── Data facet       → id | source | timestamp | key | value
-├── Meaning facet    → id | source | timestamp | key | value
-├── Structure facet  → id | source | timestamp | key | value
-└── Context facet    → table of tables (same atomic form)
-    ├── environment     (timezone, locale, session metadata)
-    ├── uncertainties   (ambiguities detected across facets)
-    ├── intent          (questions asked/answered, sampling across the boundary)
-    ├── query log       (conversation history)
-    ├── tasks           (operations performed)
-    └── score           (coherence measurements)
-```
-
-The "table of tables" property comes from the fact that Context claims *reference* other facet claims through the `key` column (e.g., `score.meaning.definition` points to the Meaning facet's `definition` key). It's tables all the way down, in the same format. The `source` column distinguishes who made the claim — the coherence gate, the user, an auditor — so disagreements about evaluations are handled the same way as disagreements about data.
-
-A conversation may involve multiple datasets — multiple tables uploaded by a user, multiple sources in a global system. Each dataset gets its own Data, Meaning, and Structure tables, each identified by URI. The Context facet ties them together: it records which datasets existed at each point in the conversation, what their facet states were, what ambiguities were detected *across* them, and how they relate.
-
-The Context facet can reference previous Context Graph states — this is the self-referential property that makes it a table of tables, not just a table. Over time, the resolution traces it produces become the persistent audit log of how understanding evolved at this boundary. (The Context Graph instance itself is ephemeral; the trace it produces is durable.)
-
-For v1: Data, Meaning, and Structure are locked as `id | source | timestamp | key | value`. The Context facet uses the same atomic form, with sub-table names encoded in the `key` column (e.g., `score.meaning.definition`, `intent.question`, `environment.timezone`). Implementation experience from the deliverable will inform conventions for these key naming patterns.
+The cost is O(1) per facet comparison per boundary crossing. The substrate reduces to binary and admits tensor decomposition, opening a path toward self-referential inference on the same surface that performs measurement.
 
 ---
 
-## Worked Example: Two Systems, One Word — Full Trace
+## Scope of This Repository
 
-Two systems both have a column called **"Revenue"**. A user asks: *"Compare Company A's revenue to Company B's revenue."*
+This repository is scoped to the Coherence Protocol committee's responsibilities as defined in the [Community Group Charter](https://github.com/W3C-Context-Graph-Community-Group/Charter):
 
-The system populates the Data, Meaning, and Structure facets for both systems, then evaluates coherence across them and records the result in the Context facet.
+**In scope:**
 
-### Data Facet
+- The formal specification for how independent Context Graphs compose across system boundaries
+- The dependency ordering governing valid facet comparison sequences (Context → Meaning → Structure → Data)
+- The canonical claim form: the irreducible five-column substrate onto which any system projects its codebook (`id | source | timestamp | key | value`)
+- The Halt / Ask / Act decision interface and the conditions governing each action
+- Cross-boundary uncertainty propagation: how misalignment at one boundary affects assessments at adjacent boundaries
+- Composite resolution trace format: how boundary-crossing decision records link into an auditable cross-system chain
+- The Boolean diff and tensor structure that connect the measurement substrate to downstream inference
+- The learning loop specification: how gauge outputs accumulate into boundary classifiers, how trained models are stored as canonical claims, and how global pattern detection emerges from local boundary history
 
-| id | source | timestamp | key | value |
-|---|---|---|---|---|
-| `urn:uuid:aaa-001` | `urn:system:broker-a` | 2026-03-06T09:00:00Z | `belongs_to` | `acme-10k-2025.xlsx` |
-| `urn:uuid:aaa-001` | `urn:system:broker-a` | 2026-03-06T09:00:00Z | `column_name` | `Revenue` |
-| `urn:uuid:aaa-001` | `urn:system:broker-a` | 2026-03-06T09:00:00Z | `value` | `4823000` |
-| `urn:uuid:bbb-001` | `urn:system:broker-b` | 2026-03-06T09:00:00Z | `belongs_to` | `globex-annual-2025.xlsx` |
-| `urn:uuid:bbb-001` | `urn:system:broker-b` | 2026-03-06T09:00:00Z | `column_name` | `Revenue` |
-| `urn:uuid:bbb-001` | `urn:system:broker-b` | 2026-03-06T09:00:00Z | `value` | `5200` |
+**Not in scope of this repository** (owned by other committees):
 
-### Meaning Facet
-
-| id | source | timestamp | key | value |
-|---|---|---|---|---|
-| `urn:uuid:aaa-001` | `urn:system:broker-a` | 2026-03-06T09:00:00Z | `definition` | `Net revenue after returns and allowances` |
-| `urn:uuid:aaa-001` | `urn:system:broker-a` | 2026-03-06T09:00:00Z | `standard` | `US-GAAP` |
-| `urn:uuid:aaa-001` | `urn:system:broker-a` | 2026-03-06T09:00:00Z | `excludes` | `deferred revenue` |
-| `urn:uuid:aaa-001` | `urn:system:broker-a` | 2026-03-06T09:00:00Z | `maps_to` | `https://xbrl.us/us-gaap/RevenueNet` |
-| `urn:uuid:bbb-001` | `urn:system:broker-b` | 2026-03-06T09:00:00Z | `definition` | `Total revenue including deferred` |
-| `urn:uuid:bbb-001` | `urn:system:broker-b` | 2026-03-06T09:00:00Z | `standard` | `IFRS` |
-| `urn:uuid:bbb-001` | `urn:system:broker-b` | 2026-03-06T09:00:00Z | `excludes` | *(none)* |
-| `urn:uuid:bbb-001` | `urn:system:broker-b` | 2026-03-06T09:00:00Z | `maps_to` | `https://xbrl.ifrs.org/Revenue` |
-
-### Structure Facet
-
-| id | source | timestamp | key | value |
-|---|---|---|---|---|
-| `urn:uuid:aaa-001` | `urn:system:broker-a` | 2026-03-06T09:00:00Z | `datatype` | `decimal` |
-| `urn:uuid:aaa-001` | `urn:system:broker-a` | 2026-03-06T09:00:00Z | `currency` | `USD` |
-| `urn:uuid:aaa-001` | `urn:system:broker-a` | 2026-03-06T09:00:00Z | `scale` | `units` |
-| `urn:uuid:bbb-001` | `urn:system:broker-b` | 2026-03-06T09:00:00Z | `datatype` | `decimal` |
-| `urn:uuid:bbb-001` | `urn:system:broker-b` | 2026-03-06T09:00:00Z | `currency` | `EUR` |
-| `urn:uuid:bbb-001` | `urn:system:broker-b` | 2026-03-06T09:00:00Z | `scale` | `thousands` |
-
-### Context Facet
-
-The system now evaluates coherence across the three facets and records the result in the Context facet. Every entry below uses the same five-column atomic form. The `source` is the coherence gate, and the `key` column references which facet property was evaluated.
-
-#### Evaluation linkage
-
-First, the evaluation explicitly identifies which entities are being compared:
-
-| id | source | timestamp | key | value |
-|---|---|---|---|---|
-| `urn:uuid:eval-001` | `urn:system:coherence-gate` | 2026-03-06T09:00:01Z | `evaluates.left` | `urn:uuid:aaa-001` |
-| `urn:uuid:eval-001` | `urn:system:coherence-gate` | 2026-03-06T09:00:01Z | `evaluates.right` | `urn:uuid:bbb-001` |
-| `urn:uuid:eval-001` | `urn:system:coherence-gate` | 2026-03-06T09:00:01Z | `evaluates.trigger` | `user query: Compare Company A's revenue to Company B's revenue` |
-
-#### Score (coherence measurement)
-
-| id | source | timestamp | key | value |
-|---|---|---|---|---|
-| `urn:uuid:eval-001` | `urn:system:coherence-gate` | 2026-03-06T09:00:01Z | `score.meaning.definition` | `mismatch` |
-| `urn:uuid:eval-001` | `urn:system:coherence-gate` | 2026-03-06T09:00:01Z | `score.meaning.standard` | `mismatch` |
-| `urn:uuid:eval-001` | `urn:system:coherence-gate` | 2026-03-06T09:00:01Z | `score.meaning.excludes` | `mismatch` |
-| `urn:uuid:eval-001` | `urn:system:coherence-gate` | 2026-03-06T09:00:01Z | `score.meaning.maps_to` | `mismatch` |
-| `urn:uuid:eval-001` | `urn:system:coherence-gate` | 2026-03-06T09:00:01Z | `score.structure.datatype` | `match` |
-| `urn:uuid:eval-001` | `urn:system:coherence-gate` | 2026-03-06T09:00:01Z | `score.structure.currency` | `mismatch` |
-| `urn:uuid:eval-001` | `urn:system:coherence-gate` | 2026-03-06T09:00:01Z | `score.structure.scale` | `mismatch` |
-| `urn:uuid:eval-001` | `urn:system:coherence-gate` | 2026-03-06T09:00:01Z | `score.meaning.coherence` | `0/4` |
-| `urn:uuid:eval-001` | `urn:system:coherence-gate` | 2026-03-06T09:00:01Z | `score.structure.coherence` | `1/3` |
-| `urn:uuid:eval-001` | `urn:system:coherence-gate` | 2026-03-06T09:00:01Z | `verdict` | `ask` |
-
-**Coherence: Meaning 0/4, Structure 1/3. Verdict: Ask** — the mismatch is consequential but resolvable through structured inquiry.
-
-To see *what* differed (not just that it differed), join back to the Meaning and Structure facets by the entity `id`s in `evaluates.left` and `evaluates.right`. The score records the evaluation; the facets record the evidence.
-
-#### Intent (sampling across the boundary)
-
-An Intent Map for this domain specifies that when revenue definitions diverge, the system should ask the user to clarify which definition they need. The intent explicitly links back to the evaluation:
-
-| id | source | timestamp | key | value |
-|---|---|---|---|---|
-| `urn:uuid:intent-001` | `urn:system:coherence-gate` | 2026-03-06T09:00:05Z | `intent.evaluation` | `urn:uuid:eval-001` |
-| `urn:uuid:intent-001` | `urn:system:coherence-gate` | 2026-03-06T09:00:05Z | `intent.question` | `System A reports net revenue (GAAP, USD, excludes deferred). System B reports total revenue (IFRS, EUR, includes deferred). Which definition do you need for this comparison?` |
-| `urn:uuid:intent-001` | `urn:system:coherence-gate` | 2026-03-06T09:00:05Z | `intent.option.1` | `Net revenue (GAAP)` |
-| `urn:uuid:intent-001` | `urn:system:coherence-gate` | 2026-03-06T09:00:05Z | `intent.option.2` | `Total revenue (IFRS)` |
-| `urn:uuid:intent-001` | `urn:system:coherence-gate` | 2026-03-06T09:00:05Z | `intent.option.3` | `Both — labeled as non-comparable` |
-| `urn:uuid:intent-001` | `urn:system:coherence-gate` | 2026-03-06T09:00:05Z | `intent.resolved` | `false` |
-
-The user responds:
-
-| id | source | timestamp | key | value |
-|---|---|---|---|---|
-| `urn:uuid:intent-001` | `urn:actor:user-jane` | 2026-03-06T09:01:12Z | `intent.response` | `Both — labeled as non-comparable` |
-| `urn:uuid:intent-001` | `urn:system:coherence-gate` | 2026-03-06T09:01:12Z | `intent.resolved` | `true` |
-
-Notice: the user's response has a different `source` (`urn:actor:user-jane`) than the system's question (`urn:system:coherence-gate`). The same `id` (`urn:uuid:intent-001`) links them — they're about the same intent event. The `timestamp` shows when the resolution occurred. This is the same pattern as every other claim in the system.
-
-#### Re-evaluation after resolution
-
-The user chose "Both — labeled as non-comparable." The system re-evaluates:
-
-| id | source | timestamp | key | value |
-|---|---|---|---|---|
-| `urn:uuid:eval-001` | `urn:system:coherence-gate` | 2026-03-06T09:01:15Z | `verdict` | `act` |
-| `urn:uuid:eval-001` | `urn:system:coherence-gate` | 2026-03-06T09:01:15Z | `verdict.basis` | `User selected labeled non-comparable presentation. No semantic transformation required. Definition mismatch, currency mismatch, and scale mismatch are surfaced in output labels.` |
-
-The verdict moves from **Ask** to **Act** — not because the definitions were reconciled, but because the user made an informed choice about how to handle the incoherence. The resolution trace records the full chain: evaluation → score → intent question → user response → re-evaluation → final verdict with basis. This trace is the persistent, auditable artifact that survives after the Context Graph instance is destroyed.
-
-Next time *any* user or system encounters these two Revenue columns, the trace is already there — the ambiguity doesn't need to be re-discovered. It has been measured, surfaced, sampled across the boundary, and resolved.
+- The Context Graph data model at a single boundary → [Context Graph Spec repo]
+- Intent Map format and serialization → [Syntax & Serialization committee]
+- Interface with RDF, OWL, SHACL, SKOS → [Semantic Alignment committee]
+- Contract between coherence measurements and decision models → [Decision Interface committee]
+- Industry use cases and adoption → [Business & Industry committee]
+- Agent-to-agent boundary crossings → [Agentic AI committee]
+- Deployment patterns and measured benefit → [Applied Knowledge committee]
 
 ---
 
-## Boundary Primitives
+## Current State
 
-Four primitives compose every coherence event:
-
-| Primitive | Definition |
+| Artifact | Status |
 |---|---|
-| **Claim** | An atomic assertion with provenance — one row in the canonical table |
-| **Uncertainty** | A measurable gap — what is not known but could be |
-| **Resolution** | How an uncertainty collapsed — which claims arrived, from where, on what basis |
-| **Verdict** | Gate output: **Act** (coherence sufficient), **Ask** (uncertainty resolvable through structured inquiry), or **Halt** (incoherence is unresolvable within current scope) |
+| [Liquid Coherence — A Protocol for Codebook Alignment at System Boundaries](./Liquid_Coherence___A_Protocol_for_Codebook_Alignment_at_System_Boundaries__12_.pdf) | Working Draft — March 2026 |
+| Canonical claim form specification | Working Draft — see Protocol Requirements |
+| Coherence Protocol specification (normative) | Not yet started |
+| Composite resolution trace format | Dependency on single-boundary trace — stub in Glossary |
+| Cross-boundary uncertainty propagation formal model | In paper; not yet in spec form |
+| Tensor substrate and learning loop specification | In paper; formal spec pending JSON-TL integration |
+
+The working draft paper establishes the formal results, worked examples, and architectural claims this committee's specification will be grounded in. Normative specification work begins from that foundation.
 
 ---
 
-## SHACL's Role
+## How the Protocol Fits the Coherence Stack
 
-SHACL is an adapter, not the framework. A SHACL shape is a bag of claims. Each SHACL shape decomposes into one or more rows of the canonical atomic table (one row per assertion). This committee defines how those rows route into the correct facet table.
+The Coherence Stack has four layers. This committee owns Layer 2.
 
----
+| Layer | Name | What it does |
+|---|---|---|
+| 0 | Tensor Substrate | Unified mathematical representation for coherence state |
+| 1 | Context Graph | Append-only hypergraph log of context events at boundaries |
+| **2** | **Coherence Protocol** | **How measurements are made and compared across boundaries — this repo** |
+| 3 | Decision Interface | Consumes coherence measurements to drive downstream decisions |
 
-## Deliverable
-
-One canonical worked example, end to end, with SHACL:
-
-1. **One financial concept** — "Revenue" from a single SEC 10-K filing (XBRL source)
-2. **SHACL shape** — Kurt writes the shape for this concept
-3. **Four facet tables** — The shape is decomposed into `id | source | timestamp | key | value` rows across Data, Meaning, Structure, and Context
-4. **One clarifying question** — An Intent Map specifies a question that resolves the most consequential ambiguity (e.g., "net or gross?")
-5. **One resolution trace** — The user answers. The system re-evaluates. The trace is complete.
-6. **Auto-generated JSON Schema** — From the facet tables, one API endpoint
-
-That's it. One concept, one document, one question, one trace. The minimal proof that SHACL decomposes into the four facets and that coherence can be measured, surfaced, and resolved at a boundary.
-
-Once this canonical example works, we scale to additional concepts and document the adapter pattern.
-
-### Routing taxonomy
-
-A canonical mapping of SHACL property types to facets:
-
-| SHACL property | Facet |
-|---|---|
-| `sh:datatype`, `sh:minCount`, `sh:maxCount`, `sh:pattern`, `sh:minInclusive` | **Structure** |
-| `ex:calculationMethod`, `ex:reportingStandard`, `ex:excludes` | **Meaning** |
-| Actor/situational prerequisites | **Context** |
-| Presence/accessibility checks | **Data** (not from SHACL) |
-
-### Adapter pattern
-
-Once the SHACL adapter works, document the general pattern so future adapters (JSON Schema, SQL DDL, OpenAPI) can populate the same five-column tables.
+Layer 2 is the connective tissue of the stack. The Context Graph (Layer 1) measures a single boundary in isolation. The Coherence Protocol specifies how those single-boundary measurements compose: how uncertainty propagates, how resolution traces link, and how a chain of boundary crossings produces a coherent — or demonstrably incoherent — cross-system record.
 
 ---
 
-## Principle
+## Why a Standard
 
-The spec follows the implementation. We ship working examples and let the math prove the specification. Consensus emerges from working code.
+The coherence protocol measures a property that no existing standard measures. The specific claims:
+
+The problem is **formally proven, not asserted.** Codebook alignment is not identifiable from channel observables. Any standard built on transmission metrics alone inherits this blind spot.
+
+Every existing standard **assumes the precondition this protocol measures.** Schema matching, ontology alignment, SHACL validation, data contracts — all require that codebooks have been surfaced before reconciliation can begin. The coherence protocol operates at the layer below: detecting whether that precondition holds. It does not compete with RDF, OWL, or SHACL. It provides the verification layer they currently lack.
+
+**AI agents cross boundaries without human intervention.** A single agent query may touch ten tools, ten APIs, ten systems — each with its own codebook. The agent's Context layer is empty. It has no instrument to detect that the meaning of a field shifted at hop three. The more capable the agent, the more convincingly it proceeds with a wrong interpretation. A standard protocol for surfacing and comparing codebooks at boundaries gives agents a structured way to build the Context that coherence requires.
+
+The measurement is **domain-agnostic.** The canonical claim form requires no prior agreement on domain terms. The five columns are fixed; the URN namespace is open. Any system in any domain can project its codebook onto the same surface. The standard specifies the envelope, not the message.
+
+The cost is **bounded.** Facet comparison is O(1) per field per boundary. Any agent running the gauge on the same projections gets the same result. This reproducibility is what makes the measurement auditable and the standard enforceable.
 
 ---
+
+## Contributing
+
+This committee's work takes place in this repository and in the [Community Group's public mailing list](https://www.w3.org/community/context-graphs/). The primary working mode is iterative: working examples first, specification language derived from demonstrated behavior.
+
+Contributions, issues, and proposed edits should be submitted as GitHub issues or pull requests against this repository.
+
+Participants from the Shannon / information theory, semantic web, AI / ML systems, decision science, and enterprise data integration communities are especially encouraged. The gap this protocol addresses is visible from each of those vantage points, and the standard will be stronger for engagement across all of them.
+
+---
+
+## Related Repositories
+
+| Repository | Committee | Scope |
+|---|---|---|
+| [Charter](https://github.com/W3C-Context-Graph-Community-Group/Charter) | Community Group | Mission, scope, deliverables, governance |
+| [Semantic-Alignment](https://github.com/W3C-Context-Graph-Community-Group/Semantic-Alignment) | Semantic Alignment | RDF/OWL/SHACL integration, Glossary, SHACL schema |
+
+---
+
+## Links
+
+- [W3C Context Graphs Community Group](https://www.w3.org/community/context-graphs/)
+- [Community Group Charter](https://github.com/W3C-Context-Graph-Community-Group/Charter)
+- [why_this_exists.md](https://github.com/W3C-Context-Graph-Community-Group/Charter/blob/main/why_this_exists.md) — The full rationale for this initiative
+
+---
+
+*Maintained by the Coherence Protocol committee of the W3C Context Graphs Community Group.*  
+*Committee Chair: Ron Itelman*
